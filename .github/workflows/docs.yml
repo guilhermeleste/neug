@@ -1,0 +1,47 @@
+name: Generate Documentation
+
+on:
+    pull_request:
+      branches:
+        - main
+      paths:
+        - 'doc/**'
+        - '.github/workflows/docs.yml'
+
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.event.number || github.head_ref || github.sha }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: [ubuntu-22.04]
+    container:
+      image: neug-registry.cn-hongkong.cr.aliyuncs.com/neug/neug-dev:v0.1.0
+      # options: --user root
+
+    steps:
+    - name: checkout
+      id: checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+
+    - name: Build Documentation
+      run: |
+        sudo apt update
+        sudo apt install -y doxygen graphviz
+        cd ${GITHUB_WORKSPACE}/tools/python_bind
+        python3 -m pip  install -r requirements.txt
+        python3 -m pip  install -r requirements_dev.txt
+        cd ${GITHUB_WORKSPACE}/doc
+        . /home/neug/.neug_env
+        make dependencies
+        make html
+

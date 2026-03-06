@@ -1,0 +1,45 @@
+{
+    "total_vertex_count": 6,
+    "total_edge_count": 14,
+    "vertex_type_statistics": [
+        {
+            "type_id": 0,
+            "type_name": "person",
+            "count": 3
+        },
+        {
+            "type_id": 1,
+            "type_name": "person_v2",
+            "count": 3
+        }
+    ],
+    "edge_type_statistics": [
+        {
+            "type_id": 0,
+            "type_name": "knows",
+            "vertex_type_pair_statistics": [
+                {
+                    "source_vertex": "person",
+                    "destination_vertex": "person",
+                    "count": 6
+                }
+            ]
+        },
+        {
+            "type_id": 1,
+            "type_name": "knows_v2",
+            "vertex_type_pair_statistics": [
+                {
+                    "source_vertex": "person",
+                    "destination_vertex": "person",
+                    "count": 2
+                },
+                {
+                    "source_vertex": "person",
+                    "destination_vertex": "person_v2",
+                    "count": 4
+                }
+            ]
+        }
+    ]
+}
