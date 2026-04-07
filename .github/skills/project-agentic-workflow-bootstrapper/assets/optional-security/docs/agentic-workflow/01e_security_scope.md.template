@@ -1,0 +1,27 @@
+# Security scope
+
+## Engagement mode
+- initial threat model / delta review / mitigation verification / post-incident refresh / model quality review
+
+## In-scope surface
+- components:
+- interfaces:
+- identities or roles:
+- trust boundaries:
+- integrations:
+- sensitive data or assets:
+- deployment assumptions:
+
+## Out of scope
+- explicit exclusions:
+
+## Evidence available
+- architecture:
+- code or config:
+- specs or contracts:
+- runtime traces or logs:
+- documentation:
+
+## Blind spots
+- missing evidence:
+- weak assumptions:

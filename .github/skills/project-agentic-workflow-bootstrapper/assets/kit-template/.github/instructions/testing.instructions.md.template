@@ -1,0 +1,16 @@
+---
+applyTo: "{{TEST_GLOB}}"
+---
+
+# Testing Instructions
+
+## Testing goals
+- assert behavior, not implementation trivia
+- cover edge cases and failure paths when behavior changes
+- keep setup and assertions readable
+- prefer local, stable tests over brittle global fixtures
+- make omissions explicit when full coverage is not practical
+
+## Coordination
+- align new tests to `docs/agentic-workflow/06_test_spec.md` when that file exists
+- preserve the writer-surface rule: this area is owned by `test-engineer`

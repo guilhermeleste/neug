@@ -1,0 +1,20 @@
+---
+name: review-specification
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Review `spec/spec-task.md` with `technical-content-evaluator` before the plan is frozen.
+
+## Inputs
+- target spec path:
+- relevant architecture notes:
+- relevant goal or context docs:
+- specific ambiguities or review concerns:
+
+## Process
+1. read the current specification plus architecture and any relevant security context when present
+2. evaluate ambiguity, missing prerequisites, contradictions, unclear acceptance language, and missing interfaces or constraints
+3. when the spec contains externally checkable claims or standards references, delegate those claims to `doublecheck`
+4. write the review into `docs/agentic-workflow/02b_spec_review.md`
+5. clearly separate blocking issues, non-blocking improvements, verified claims, and unsupported or unverified claims

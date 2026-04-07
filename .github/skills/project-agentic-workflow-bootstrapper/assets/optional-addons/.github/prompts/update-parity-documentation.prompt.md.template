@@ -1,0 +1,21 @@
+---
+name: update-parity-documentation
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Use `gem-documentation-writer` during closeout to update docs and diagrams that should now reflect the implemented change.
+
+## Inputs
+- frozen plan:
+- execution log:
+- conformance report:
+- changed files or diff summary:
+- target docs or diagram paths:
+
+## Process
+1. identify documentation surfaces that should change because of the patch
+2. update parity docs, diagrams, or change records only where evidence supports it
+3. when updated docs contain externally checkable claims or standards references, request `technical-content-evaluator` plus `doublecheck` before final closeout
+4. record touched doc surfaces, remaining gaps, and unresolved documentation debt in `docs/agentic-workflow/10a_documentation_closeout.md`
+5. do not invent behavior beyond the repository evidence

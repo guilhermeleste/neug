@@ -1,0 +1,21 @@
+---
+name: implement-from-plan
+tools: ["read", "search", "edit", "runTasks", "runCommands"]
+---
+
+# Goal
+Implement a backend change against an approved frozen plan.
+
+## Required inputs
+- `docs/agentic-workflow/04_plan_frozen.md`
+- `docs/agentic-workflow/05_execution_contract.md`
+- `docs/agentic-workflow/06_test_spec.md` when present
+
+## Process
+1. restate the scoped objective
+2. touch only approved production-code surfaces
+3. keep the change minimal and reviewable
+4. log progress in `docs/agentic-workflow/07_execution_log.md`
+5. list verification performed
+6. note any deviation that requires a plan change request
+7. stop instead of silently drifting

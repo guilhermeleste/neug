@@ -1,0 +1,24 @@
+---
+applyTo: "**"
+---
+
+# Review Instructions
+
+Review AI-generated changes using a stricter rubric than ordinary review.
+
+Prioritize:
+- correctness against the requested outcome
+- assumptions, hidden defaults, and edge cases
+- architectural fit
+- test adequacy
+- maintainability and readability
+- accidental complexity
+- change outside the approved scope
+- missing evidence for claimed verification
+- unsupported factual claims when the review references external behavior, standards, versions, or documentation
+
+Report findings with:
+- severity
+- rationale
+- suggested next action
+- whether the issue is blocking or non-blocking

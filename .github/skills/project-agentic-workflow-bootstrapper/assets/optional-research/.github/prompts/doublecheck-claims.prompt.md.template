@@ -1,0 +1,19 @@
+---
+name: doublecheck-claims
+tools: ["read", "search"]
+---
+
+# Goal
+Verify externally checkable claims in a specification, plan, ADR, doc review, or red-team finding.
+
+## Inputs
+- target artifact path:
+- claims or sections to verify:
+- expected authority sources:
+- destination review artifact:
+
+## Process
+1. isolate the claims that require source-backed checking
+2. consult repository evidence and authoritative sources available to the workspace
+3. classify each claim as verified, partly verified, unsupported, contradicted, or unverified
+4. record source pointers, missing evidence, and required corrections in the destination review artifact

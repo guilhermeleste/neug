@@ -1,0 +1,26 @@
+---
+name: build-asvs-evidence-matrix
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Turn security evidence into an ASVS-oriented matrix, residual-risk statement, and release gates.
+
+## Inputs
+- reviewed security artifacts:
+- target asvs level:
+- scope assumptions:
+- compensating controls:
+
+## Process
+1. fix the normative baseline and target level
+2. freeze scope, sampling limits, and artifact types actually examined
+3. assign strict statuses and verification classes to the in-scope controls or findings
+4. search for counter-evidence before granting confidence
+5. separate verified items, limitations, nonconformance, and insufficient-evidence items
+6. produce release gates grounded in exploitability, exposure, impact, and residual risk
+
+## Outputs
+- `docs/agentic-workflow/08c_security_conformance_report.md`
+- `docs/agentic-workflow/10c_security_evidence_matrix.md`
+- `docs/agentic-workflow/10d_security_release_gates.md`

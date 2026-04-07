@@ -1,0 +1,35 @@
+# Task specification
+
+## Purpose
+- what behavior or contract change is this task meant to deliver?
+
+## Scope
+- in scope
+- out of scope
+
+## Definitions
+- define repository-local terms if needed
+
+## Authority and references
+- repository sources:
+- official docs or standards:
+- source-backed assumptions requiring verification:
+
+## Requirements
+- requirement
+- requirement
+
+## Interfaces or contracts
+- interface or contract affected
+- expectations at the boundary
+
+## Acceptance criteria
+- criterion
+- criterion
+## Security considerations
+- required controls or constraints:
+- trust or privilege boundaries affected:
+- claims or standards references requiring verification:
+
+## Open questions
+- unresolved ambiguity

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cat <<'BANNER'
+AGENTIC WORKFLOW POLICY ACTIVE
+- prompts and tool use may be logged
+- risky commands may be blocked
+- follow repository guidance if a command is denied
+BANNER

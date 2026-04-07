@@ -1,0 +1,23 @@
+---
+name: check-plan-conformance
+tools: ["read", "search"]
+---
+
+# Goal
+Compare the execution record against the frozen plan and execution contract.
+
+## Required inputs
+- `docs/agentic-workflow/04_plan_frozen.md`
+- `docs/agentic-workflow/05_execution_contract.md`
+- `docs/agentic-workflow/07_execution_log.md`
+
+## Process
+1. compare approved paths vs touched paths
+2. compare approved steps vs executed steps
+3. compare required evidence vs provided evidence
+4. if the optional security bundle is present and security requirements exist, compare them against implemented controls, tests, and evidence
+5. identify stop, warn, and acceptable deviations
+6. state whether a plan change request is required
+
+## Output
+Write the result into `docs/agentic-workflow/08_conformance_report.md`.

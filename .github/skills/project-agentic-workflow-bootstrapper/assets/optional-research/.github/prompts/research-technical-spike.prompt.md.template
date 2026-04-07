@@ -1,0 +1,21 @@
+---
+name: research-technical-spike
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Run a bounded technical spike before planning or implementation hardens around an uncertain technical choice.
+
+## Inputs
+- question:
+- why this uncertainty matters:
+- relevant code or subsystems:
+- authority sources to check first:
+- desired recommendation format:
+
+## Process
+1. restate the technical question narrowly
+2. inspect repository evidence first
+3. check primary docs or other authority sources when needed
+4. record findings and unknowns in `docs/agentic-workflow/01d_technical_spike.md`
+5. end with a recommendation, trade-offs, and follow-up questions if any remain

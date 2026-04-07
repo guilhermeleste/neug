@@ -1,0 +1,4 @@
+# Threat register
+
+| id | title | affected asset or flow | method or category | what can go wrong | preconditions | existing controls | remaining gap | mitigation | validation check | reopen trigger |
+|---|---|---|---|---|---|---|---|---|---|---|

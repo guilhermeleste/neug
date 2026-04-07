@@ -1,0 +1,23 @@
+# Repository Copilot Instructions
+
+## Purpose
+- Apply these standards to all Copilot interactions in this repository.
+
+## Architecture
+- Respect existing module boundaries.
+- Prefer extending current patterns over introducing new frameworks or abstractions.
+- Do not change public contracts unless the task explicitly requires it.
+
+## Code style
+- Keep patches small and reviewable.
+- Favor readable, idiomatic code over clever shortcuts.
+- Reuse existing utility layers before adding new helpers.
+
+## Verification
+- Propose verification steps for every non-trivial change.
+- Update or add tests when behavior changes.
+- Mention any assumptions or unknowns instead of inventing behavior.
+
+## Review expectations
+- Call out riskier areas before editing them.
+- Summarize changed files and why each changed.

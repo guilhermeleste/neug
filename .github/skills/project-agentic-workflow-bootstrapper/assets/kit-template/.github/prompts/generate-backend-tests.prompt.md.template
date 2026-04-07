@@ -1,0 +1,20 @@
+---
+name: generate-backend-tests
+tools: ["read", "search", "edit", "runTasks", "runCommands"]
+---
+
+# Goal
+Write or update tests for the approved change.
+
+## Required inputs
+- `docs/agentic-workflow/04_plan_frozen.md`
+- `docs/agentic-workflow/06_test_spec.md`
+- implementation diff or changed files
+
+## Process
+1. identify behaviors that must be protected
+2. cover failure paths and edge cases
+3. keep tests aligned to repository norms
+4. avoid leaking implementation details into assertions
+5. list what remains untested and why
+6. update `06_test_spec.md` if material gaps are discovered

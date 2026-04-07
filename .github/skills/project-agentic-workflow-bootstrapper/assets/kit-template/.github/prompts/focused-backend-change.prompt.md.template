@@ -1,0 +1,20 @@
+---
+name: focused-backend-change
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Perform one bounded backend change with explicit risks and verification.
+
+## Inputs
+- outcome:
+- constraints:
+- files or areas to inspect:
+- verification expectations:
+
+## Process
+1. summarize the target area
+2. propose the smallest viable change
+3. state risks and assumptions
+4. implement or draft the change
+5. list verification steps and remaining gaps

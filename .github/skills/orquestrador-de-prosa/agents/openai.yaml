@@ -1,0 +1,9 @@
+interface:
+  display_name: Orquestrador de Prosa
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

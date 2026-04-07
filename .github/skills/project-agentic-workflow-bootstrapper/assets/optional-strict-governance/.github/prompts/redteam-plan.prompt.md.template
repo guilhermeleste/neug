@@ -1,0 +1,24 @@
+---
+name: redteam-plan
+tools: ["read", "search"]
+---
+
+# Goal
+Perform a destructive review of the draft plan before implementation begins.
+
+## Required inputs
+- `docs/agentic-workflow/02_plan.md`
+- `docs/agentic-workflow/01_context_pack.md`
+- `docs/agentic-workflow/01c_architecture_overview.md` when present
+- `docs/agentic-workflow/02a_architecture_review.md` when present
+
+## Process
+1. identify hidden assumptions
+2. identify missing edge cases
+3. identify unjustified complexity
+4. identify scope-drift risk
+5. identify architecture-plan mismatch when relevant
+6. classify findings as blocking or non-blocking
+
+## Output
+Write the synthesis into `docs/agentic-workflow/03_plan_redteam.md`.

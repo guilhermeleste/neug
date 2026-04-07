@@ -1,0 +1,15 @@
+---
+applyTo: "**/*test*.*, tests/**, spec/**"
+---
+
+# Testing Instructions
+
+## Testing goals
+- Write tests that assert behavior, not implementation trivia.
+- Prefer explicit setup and assertions.
+- Cover edge cases and failure paths when behavior is changed.
+
+## Test quality
+- Keep tests readable and local in intent.
+- Avoid brittle mocks unless they are already the project norm.
+- State what behavior each test protects.

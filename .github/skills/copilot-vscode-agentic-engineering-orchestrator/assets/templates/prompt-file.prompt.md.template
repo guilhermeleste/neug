@@ -1,0 +1,20 @@
+---
+name: focused-engineering-task
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Perform a single, well-scoped engineering task.
+
+## Inputs
+- outcome:
+- constraints:
+- files or areas to inspect:
+- verification expectations:
+
+## Process
+1. Summarize the target area.
+2. Propose the smallest viable change.
+3. Implement or draft the change.
+4. List verification steps.
+5. Summarize risks and assumptions.

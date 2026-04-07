@@ -1,0 +1,25 @@
+---
+name: review-web-surface-security
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Review browser, session, client-side, or mixed-evidence web surfaces for security findings.
+
+## Inputs
+- target surface or paths:
+- relevant architecture or threat notes:
+- authorization for runtime verification:
+- specific review focus:
+
+## Process
+1. classify the engagement mode and allowed claims
+2. select applicable WSTG families rather than enumerating everything
+3. build an evidence matrix with status, severity, and confidence kept separate
+4. search for counter-evidence before finalizing claims
+5. record planning, red-team, or closure outputs as appropriate
+
+## Outputs
+- update `docs/agentic-workflow/02c_security_requirements.md` before plan freeze when planning is active
+- update `docs/agentic-workflow/03c_security_redteam.md` during plan red-team when relevant
+- update `docs/agentic-workflow/10c_security_evidence_matrix.md` and `10d_security_release_gates.md` during closure when relevant

@@ -1,0 +1,17 @@
+---
+applyTo: "**"
+---
+
+# Review Instructions
+
+When reviewing changes in this repository, prioritize:
+- correctness and edge cases
+- architectural fit
+- test adequacy
+- maintainability
+- accidental complexity
+
+Report findings with:
+- severity
+- rationale
+- suggested next action

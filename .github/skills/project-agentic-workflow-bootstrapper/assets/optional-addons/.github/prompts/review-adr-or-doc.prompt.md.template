@@ -1,0 +1,20 @@
+---
+name: review-adr-or-doc
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Use `technical-content-evaluator` to review ADRs or broader technical docs before closeout.
+
+## Inputs
+- target document paths:
+- related spec or architecture notes:
+- intended audience:
+- known review concerns:
+
+## Process
+1. inspect the target docs and the architecture/spec/security context they rely on
+2. evaluate factual precision, ambiguity, missing context, decision traceability, and audience fit
+3. when the docs contain externally checkable claims or standards references, delegate those claims to `doublecheck`
+4. write the review into `docs/agentic-workflow/10b_documentation_review.md`
+5. classify issues as blocking or non-blocking and separate verified claims from unsupported or unverified claims

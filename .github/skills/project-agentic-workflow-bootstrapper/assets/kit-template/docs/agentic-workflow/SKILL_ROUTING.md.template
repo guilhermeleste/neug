@@ -1,0 +1,20 @@
+# Skill routing for {{PROJECT_NAME}}
+
+## Default rule
+Use the smallest skill or role that materially improves the current task. Do not route to research, documentation, security, or hooks flows unless the task justifies them.
+
+## Core routing
+- `developer` handles default implementation flow
+- `test-engineer` handles test-specific work
+- `planner` handles explicit planning when present
+
+## Rigorous-only routing
+- `context-researcher` for multi-file context mapping
+- `architecture-synthesizer` for architecture-first synthesis
+- `critical-judge` for destructive review
+- `plan-verifier` for conformance governance
+
+## Optional bundle routing
+- research skills -> only when repository reading is insufficient
+- documentation skills -> only when parity, ADRs, or technical text quality matter
+- security skills -> only for security-sensitive surfaces or evidence-backed release gates

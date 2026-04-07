@@ -1,0 +1,10 @@
+interface:
+  display_name: Project Agentic Workflow Bootstrapper
+  short_description: Inspect a project and generate or update a strict repository-specific agentic workflow kit.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

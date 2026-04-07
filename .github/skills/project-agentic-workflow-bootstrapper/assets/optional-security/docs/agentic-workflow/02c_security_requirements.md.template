@@ -1,0 +1,15 @@
+# Security requirements for the task
+
+## Required controls
+- control:
+- why it is required:
+- artifact or surface affected:
+- evidence expected:
+
+## Required tests or validation
+- test:
+- surface:
+- blocking or warning:
+
+## Known blind spots
+- unresolved evidence gap:

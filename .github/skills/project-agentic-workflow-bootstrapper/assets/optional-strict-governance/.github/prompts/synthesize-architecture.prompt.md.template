@@ -1,0 +1,22 @@
+---
+name: synthesize-architecture
+tools: ["read", "search"]
+---
+
+# Goal
+Synthesize the high-level architecture relevant to the current task before detailed planning or when the plan may have drifted from system boundaries.
+
+## Required inputs
+- `docs/agentic-workflow/00_goal.md`
+- `docs/agentic-workflow/01_context_pack.md`
+- relevant repository paths or changed surfaces
+
+## Process
+1. identify the relevant components and boundaries
+2. identify interfaces, contracts, and major flows
+3. identify integrations, failure modes, and trust boundaries
+4. mark unknowns explicitly instead of speculating
+5. note what the planner must respect or re-check later
+
+## Output
+Write the result into `docs/agentic-workflow/01c_architecture_overview.md` or `02a_architecture_review.md` depending on whether this is pre-plan synthesis or plan refinement.

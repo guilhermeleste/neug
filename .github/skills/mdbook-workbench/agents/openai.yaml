@@ -1,0 +1,11 @@
+interface:
+  display_name: mdBook Workbench
+  short_description: Plan, structure, review, and troubleshoot mdBook documentation
+    projects.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

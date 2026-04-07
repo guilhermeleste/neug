@@ -1,0 +1,17 @@
+---
+applyTo: "{{BACKEND_GLOB}}"
+---
+
+# Backend Instructions
+
+## Local rules
+- follow the dominant backend patterns already present in adjacent files
+- keep changes local before introducing new helpers, services, or abstractions
+- protect public APIs, persistence semantics, migrations, and domain invariants
+- prefer explicit failure handling and observable behavior
+- treat unjustified new abstractions as a defect, not a neutral choice
+
+## Verification
+- run the smallest relevant backend checks first
+- note the exact commands for build, lint, and targeted tests in `docs/agentic-workflow/ARCHITECTURE.md`
+- if performance, concurrency, data integrity, or security are affected, say so explicitly

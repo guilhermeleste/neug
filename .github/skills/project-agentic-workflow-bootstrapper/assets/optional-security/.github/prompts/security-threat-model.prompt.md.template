@@ -1,0 +1,25 @@
+---
+name: security-threat-model
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Create or refresh the security scope and threat register for the current task surface.
+
+## Inputs
+- target feature or system:
+- relevant architecture docs:
+- relevant specs or contracts:
+- known sensitive assets or identities:
+- out-of-scope surfaces:
+
+## Process
+1. capture the smallest accurate security scope
+2. identify assets, actors, trust boundaries, identities, integrations, data sensitivity, and deployment assumptions
+3. record explicit assumptions and blind spots
+4. enumerate material threats, preconditions, impacts, controls, gaps, and mitigations
+5. define validation checks and reopen triggers
+
+## Outputs
+- `docs/agentic-workflow/01e_security_scope.md`
+- `docs/agentic-workflow/01f_threat_register.md`

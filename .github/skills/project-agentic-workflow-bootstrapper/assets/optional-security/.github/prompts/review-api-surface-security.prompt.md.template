@@ -1,0 +1,25 @@
+---
+name: review-api-surface-security
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Review API surfaces, specs, code, diffs, or traffic for evidence-driven security findings.
+
+## Inputs
+- api artifacts or paths:
+- relevant threat or architecture notes:
+- auth or tenant assumptions:
+- specific review focus:
+
+## Process
+1. determine whether this is spec, code, diff, or traffic track
+2. map the reviewed surface and its likely trust boundaries
+3. classify findings as confirmed, probable, hypothesis, or blind spot
+4. identify missing regression tests and merge or release gates
+5. record findings and required controls for planning or closure
+
+## Outputs
+- update `docs/agentic-workflow/02c_security_requirements.md` before plan freeze when planning is active
+- update `docs/agentic-workflow/03c_security_redteam.md` during plan red-team when relevant
+- update `docs/agentic-workflow/10c_security_evidence_matrix.md` and `10d_security_release_gates.md` during closure when relevant

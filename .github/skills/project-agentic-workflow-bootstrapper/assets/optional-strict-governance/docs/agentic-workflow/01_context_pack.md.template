@@ -1,0 +1,41 @@
+# 01 context pack
+
+## Facts
+-
+
+## Hypotheses
+-
+
+## Gaps
+-
+
+## Commands
+-
+
+## Risks
+-
+
+## Authority sources
+-
+
+## Context map
+### Primary files and modules
+-
+
+### Secondary or adjacent files
+-
+
+### Relevant tests, fixtures, or CI surfaces
+-
+
+### Existing patterns or seams to follow
+-
+
+### Suggested change sequence for multi-file work
+-
+
+## Optional research triggers
+- note whether the research bundle is needed for official docs, literature, spikes, specifications, or claim verification
+
+## Architecture synthesis trigger
+- use `01c_architecture_overview.md` when the task crosses module boundaries, touches contracts, affects major flows, or the system is poorly understood

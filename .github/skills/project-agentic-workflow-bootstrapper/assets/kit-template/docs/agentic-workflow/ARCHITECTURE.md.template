@@ -1,0 +1,61 @@
+# Copilot workflow architecture for {{PROJECT_NAME}}
+
+## Selected profile
+- profile: `{{PROFILE}}`
+- strict governance: `{{STRICT_GOVERNANCE}}`
+
+## Project reading
+- project type:
+- dominant backend surface:
+- dominant test surface:
+- critical constraints:
+- authoritative docs or specs:
+- security-sensitive surfaces:
+
+## Roles present in this profile
+### developer
+- purpose:
+- write permissions:
+- key commands:
+- completion gate:
+
+### test-engineer
+- purpose:
+- write permissions:
+- test quality bar:
+
+### planner (standard and rigorous only)
+- purpose:
+- outputs:
+- deviation policy:
+
+### Strict-governance roles (rigorous only)
+- context-researcher
+- architecture-synthesizer
+- critical-judge
+- plan-verifier
+
+## Optional bundles
+### research bundle
+- which research roles are justified:
+- trigger conditions:
+- expected outputs:
+
+### documentation bundle
+- when documentation parity or ADR review is justified:
+- closure triggers:
+
+### security bundle
+- when explicit security routing is justified:
+- threat-model triggers:
+- API-review triggers:
+- web-review triggers:
+- evidence and release-gate triggers:
+
+### hooks bundle
+- whether command policy or prompt logging is justified:
+
+## Intentional omissions
+- which profile levels or bundles are intentionally absent:
+- which roles were merged into stronger defaults:
+- which artifacts were removed to keep the workflow small:

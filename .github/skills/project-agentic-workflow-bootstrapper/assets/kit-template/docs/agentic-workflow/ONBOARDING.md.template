@@ -1,0 +1,21 @@
+# {{PROJECT_NAME}} onboarding checklist
+
+Use this file to roll the workflow out without turning it into ritual.
+
+## Day 0
+- confirm the selected profile in `README.md`
+- verify backend and test globs are correct
+- replace generic instructions with repository-specific constraints
+- record real build, lint, test, and smoke commands
+
+## First task
+- choose one bounded backend change
+- use the generated prompts instead of free-form chat first
+- keep the task small enough to review fully
+- note where the workflow felt heavy, vague, or redundant
+
+## End of first week
+- remove files the team did not use
+- tighten prompts or instructions that were too generic
+- decide whether to escalate or de-escalate the profile
+- only add optional bundles if a real gap remains

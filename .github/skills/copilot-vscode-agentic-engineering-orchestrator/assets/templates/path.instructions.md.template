@@ -1,0 +1,16 @@
+---
+applyTo: "src/frontend/**"
+---
+
+# Scoped Copilot Instructions
+
+## Purpose
+- These instructions apply only to the matched files.
+
+## Local rules
+- Follow the conventions of this area before repository-wide defaults.
+- Keep terminology and naming aligned to adjacent files.
+- Prefer modifying existing components over creating parallel patterns.
+
+## Verification
+- Run or propose the smallest relevant checks for this area.

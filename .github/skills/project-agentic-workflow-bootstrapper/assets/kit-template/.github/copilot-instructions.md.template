@@ -1,0 +1,27 @@
+# Repository Copilot Instructions
+
+## Purpose
+- apply these defaults across this repository
+- keep behavior aligned to `docs/agentic-workflow/ARCHITECTURE.md`
+
+## Core rules
+- work from explicit goals, constraints, and success criteria
+- surface assumptions, ambiguities, and risks before large edits
+- for multi-file or unfamiliar work, start with a context map of primary files, secondary files, relevant tests, existing patterns, and intended change order
+- prefer the smallest sufficient change
+- preserve existing module boundaries and public contracts unless the task explicitly says otherwise
+- do not change files outside the approved scope without calling that out first
+- do not remove comments or code outside the task as a side effect
+- do not treat chat memory as the canonical policy source when repository documents exist
+
+## Verification
+- propose verification steps for every non-trivial change
+- update or add tests when behavior changes
+- state what was verified and what was not
+- record material deviations through `04b_plan_change_request.md`
+- when a spec, ADR, or review contains externally checkable claims, route them through source-backed checking instead of trusting narrative confidence
+
+## Review expectations
+- summarize changed files and why each changed
+- call out accidental complexity, invented abstractions, dead code, and scope drift
+- reference the frozen plan and execution contract when those exist

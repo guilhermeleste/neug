@@ -1,0 +1,39 @@
+# {{PROJECT_NAME}} agentic workflow
+
+This directory holds the repository-specific Copilot workflow for backend work.
+
+## Selected profile
+- profile: `{{PROFILE}}`
+- strict governance: `{{STRICT_GOVERNANCE}}`
+
+## Core roles present in every profile
+- `developer` -> visible entrypoint and production-code writer
+- `test-engineer` -> test strategy and test edits
+
+## Standard profile role
+- `planner` -> bounded plan plus frozen plan
+
+## Rigorous profile roles
+- `context-researcher` -> context pack plus context map
+- `architecture-synthesizer` -> high-level task architecture
+- `critical-judge` -> destructive review
+- `plan-verifier` -> conformance and drift control
+
+## Optional bundles
+### Research bundle
+Adds official-docs lookup, academic lookup, bounded spikes, repository-local specifications, and source-backed claim verification.
+
+### Documentation bundle
+Adds parity documentation closeout plus ADR, specification, and technical-document review.
+
+### Security bundle
+Adds threat modeling, API security review, web security review, and ASVS-oriented evidence and release gates.
+
+### Hooks bundle
+Adds session banner, prompt logging, and pre-tool policy examples.
+
+
+## First-run adoption
+- start with `ONBOARDING.md`
+- run one bounded real task before expanding the workflow
+- simplify before you harden

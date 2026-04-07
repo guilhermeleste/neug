@@ -1,0 +1,23 @@
+---
+name: write-or-update-specification
+tools: ["read", "search", "edit"]
+---
+
+# Goal
+Create or refresh a repository-local specification for behaviorally or contractually significant work.
+
+## Inputs
+- change or feature:
+- relevant architecture notes:
+- relevant repository evidence:
+- interfaces or contracts affected:
+- acceptance expectations:
+
+## Process
+1. define scope and non-goals
+2. extract requirements from the goal, context, and architecture
+3. make interfaces, contracts, behaviors, and authority references explicit
+4. write or update `spec/spec-task.md`
+5. if the specification contains externally checkable claims, standards references, or version claims, request `doublecheck`
+6. if the optional documentation bundle is present and the specification changed materially, request a `technical-content-evaluator` review into `docs/agentic-workflow/02b_spec_review.md`
+7. highlight unresolved ambiguities instead of papering them over

@@ -1,0 +1,31 @@
+---
+name: plan-backend-change
+tools: ["read", "search"]
+---
+
+# Goal
+Create a bounded implementation plan for a backend change.
+
+## Inputs
+- objective:
+- constraints:
+- backend paths:
+- prohibited paths:
+- success criteria:
+
+## Process
+1. summarize the target area
+2. list assumptions and ambiguities
+3. ensure the context pack includes a context map for multi-file or unfamiliar work
+4. ensure architecture has been synthesized for non-trivial work
+5. if the optional security bundle is present and the task is security-relevant, ensure security scope, threat register, and security requirements exist before freezing the plan
+6. propose the smallest viable approach
+7. list affected files or directories
+8. define verification steps
+9. call out risks and rollback notes
+10. identify what would require a plan change request later
+11. identify what would require renewed architecture review later
+12. identify what would require renewed security review later
+
+## Output
+Write the result into `docs/agentic-workflow/02_plan.md`.
