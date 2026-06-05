@@ -15,6 +15,8 @@
 
 #include "neug/storages/csr/immutable_csr.h"
 
+#include "neug/storages/module/module_factory.h"
+
 #include <glog/logging.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +24,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <thread>
@@ -29,28 +32,23 @@
 
 #include "neug/storages/container/container_utils.h"
 #include "neug/storages/container/i_container.h"
-#include "neug/storages/file_names.h"
 #include "neug/utils/property/types.h"
 
 namespace neug {
 
 template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::open_internal(const std::string& snapshot_prefix,
-                                          const std::string& tmp_prefix,
-                                          MemoryLevel mem_level) {
-  close();
-  load_meta(snapshot_prefix);
-  degree_list_buffer_ =
-      OpenContainer(snapshot_prefix + ".deg", tmp_prefix + ".deg", mem_level);
-  nbr_list_buffer_ =
-      OpenContainer(snapshot_prefix + ".nbr", tmp_prefix + ".nbr", mem_level);
-  if (mem_level == MemoryLevel::kSyncToFile) {
-    adj_list_buffer_ = OpenContainer("", tmp_prefix + ".adj", mem_level);
-  } else {
-    adj_list_buffer_ = OpenContainer("", "", mem_level);
-  }
+void ImmutableCsr<EDATA_T>::Open(Checkpoint& ckp, const ModuleDescriptor& desc,
+                                 MemoryLevel memory_level) {
+  unsorted_since_ = std::stoull(desc.get("unsorted_since").value_or("0"));
+  edge_num_.store(std::stoull(desc.get("edge_num").value_or("0")));
+  degree_list_buffer_ = ckp.OpenFile(
+      desc.get_path(ModuleDescriptor::kDegreeListPath).value_or(""),
+      memory_level);
+  nbr_list_buffer_ = ckp.OpenFile(
+      desc.get_path(ModuleDescriptor::kNbrListPath).value_or(""), memory_level);
   auto v_cap = size();
-  adj_list_buffer_->Resize(v_cap * sizeof(nbr_t*));
+  adj_list_buffer_ = ckp.CreateRuntimeContainer(v_cap * sizeof(nbr_t*),
+                                                MemoryLevel::kInMemory);
   auto adj_lists_ptr = reinterpret_cast<nbr_t**>(adj_list_buffer_->GetData());
   auto degree_list_ptr =
       reinterpret_cast<const int*>(degree_list_buffer_->GetData());
@@ -68,38 +66,15 @@ void ImmutableCsr<EDATA_T>::open_internal(const std::string& snapshot_prefix,
 }
 
 template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::open(const std::string& name,
-                                 const std::string& snapshot_dir,
-                                 const std::string& work_dir) {
-  // Changes made to the CSR will not be synchronized to the file
-  // TODO(luoxiaojian): Implement the insert operation on ImmutableCsr.
-  // Allow an empty or missing snapshot_dir: the underlying helpers already
-  // handle absent files by falling back to empty containers.  A subsequent
-  // resize() / insert call will allocate storage as needed.
-  std::string snap_prefix =
-      (!snapshot_dir.empty() && std::filesystem::exists(snapshot_dir))
-          ? snapshot_dir + "/" + name
-          : "";
-  auto tmp_prefix = tmp_dir(work_dir) + "/" + name;
-  open_internal(snap_prefix, tmp_prefix, MemoryLevel::kSyncToFile);
-}
-
-template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::open_in_memory(const std::string& prefix) {
-  open_internal(prefix, "", MemoryLevel::kInMemory);
-}
-
-template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::open_with_hugepages(const std::string& prefix) {
-  open_internal(prefix, "", MemoryLevel::kHugePagePrefered);
-}
-
-template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::dump(const std::string& name,
-                                 const std::string& new_snapshot_dir) {
-  dump_meta(new_snapshot_dir + "/" + name);
-  degree_list_buffer_->Dump(new_snapshot_dir + "/" + name + ".deg");
-  nbr_list_buffer_->Dump(new_snapshot_dir + "/" + name + ".nbr");
+ModuleDescriptor ImmutableCsr<EDATA_T>::Dump(Checkpoint& ckp) {
+  ModuleDescriptor desc;
+  desc.module_type = ModuleTypeName();
+  desc.set("unsorted_since", std::to_string(unsorted_since_));
+  desc.set("edge_num", std::to_string(edge_num_.load()));
+  desc.set_path(ModuleDescriptor::kDegreeListPath,
+                ckp.Commit(*degree_list_buffer_));
+  desc.set_path(ModuleDescriptor::kNbrListPath, ckp.Commit(*nbr_list_buffer_));
+  return desc;
 }
 
 template <typename EDATA_T>
@@ -172,16 +147,10 @@ size_t ImmutableCsr<EDATA_T>::capacity() const {
 }
 
 template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::close() {
-  if (adj_list_buffer_) {
-    adj_list_buffer_->Close();
-  }
-  if (degree_list_buffer_) {
-    degree_list_buffer_->Close();
-  }
-  if (nbr_list_buffer_) {
-    nbr_list_buffer_->Close();
-  }
+void ImmutableCsr<EDATA_T>::Close() {
+  adj_list_buffer_.reset();
+  degree_list_buffer_.reset();
+  nbr_list_buffer_.reset();
 }
 
 template <typename EDATA_T>
@@ -215,6 +184,11 @@ void ImmutableCsr<EDATA_T>::batch_delete_vertices(
       continue;
     }
     if (src_set.find(i) != src_set.end()) {
+      for (int j = 0; j < deg; ++j) {
+        if (adj_arr[i][j].neighbor != std::numeric_limits<vid_t>::max()) {
+          edge_num_.fetch_sub(1, std::memory_order_relaxed);
+        }
+      }
       removed += deg;
       deg_arr[i] = 0;
     } else {
@@ -228,6 +202,9 @@ void ImmutableCsr<EDATA_T>::batch_delete_vertices(
         } else {
           --deg_arr[i];
           ++removed;
+          if (old_ptr->neighbor != std::numeric_limits<vid_t>::max()) {
+            edge_num_.fetch_sub(1, std::memory_order_relaxed);
+          }
         }
         ++old_ptr;
       }
@@ -240,6 +217,7 @@ void ImmutableCsr<EDATA_T>::batch_delete_vertices(
     adj_arr[i] = ptr;
     ptr += deg_arr[i];
   }
+  unsorted_since_ = 0;
 }
 
 template <typename EDATA_T>
@@ -270,11 +248,13 @@ void ImmutableCsr<EDATA_T>::batch_delete_edges(
         if (write_ptr->neighbor != std::numeric_limits<vid_t>::max() &&
             dst_set.find(write_ptr->neighbor) != dst_set.end()) {
           write_ptr->neighbor = std::numeric_limits<vid_t>::max();
+          edge_num_.fetch_sub(1, std::memory_order_relaxed);
         }
         ++write_ptr;
       }
     }
   }
+  unsorted_since_ = 0;
 }
 
 template <typename EDATA_T>
@@ -300,9 +280,11 @@ void ImmutableCsr<EDATA_T>::batch_delete_edges(
       nbr_t* write_ptr = adj_arr[i];
       for (const auto& offset : iter->second) {
         write_ptr[offset].neighbor = std::numeric_limits<vid_t>::max();
+        edge_num_.fetch_sub(1, std::memory_order_relaxed);
       }
     }
   }
+  unsorted_since_ = 0;
 }
 
 template <typename EDATA_T>
@@ -320,6 +302,8 @@ void ImmutableCsr<EDATA_T>::delete_edge(vid_t src, int32_t offset,
     return;
   }
   nbrs[offset].neighbor = std::numeric_limits<vid_t>::max();
+  edge_num_.fetch_sub(1, std::memory_order_relaxed);
+  unsorted_since_ = 0;
 }
 
 template <typename EDATA_T>
@@ -337,6 +321,7 @@ void ImmutableCsr<EDATA_T>::revert_delete_edge(vid_t src, vid_t nbr,
         "Attempting to revert delete on edge that is not deleted.");
   }
   nbrs[offset].neighbor = nbr;
+  edge_num_.fetch_add(1, std::memory_order_relaxed);
 }
 
 template <typename EDATA_T>
@@ -371,57 +356,31 @@ void ImmutableCsr<EDATA_T>::batch_put_edges(
     auto& nbr = adj_arr[src][old_degree_list[src]++];
     nbr.neighbor = dst_list[i];
     nbr.data = data_list[i];
+    edge_num_.fetch_add(1, std::memory_order_relaxed);
   }
-}
-
-template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::load_meta(const std::string& prefix) {
-  std::string meta_file_path = prefix + ".meta";
-  if (std::filesystem::exists(meta_file_path)) {
-    FILE* meta_file_fd = fopen(meta_file_path.c_str(), "r");
-    CHECK_EQ(fread(&unsorted_since_, sizeof(timestamp_t), 1, meta_file_fd), 1);
-    fclose(meta_file_fd);
-  } else {
+  // invalidate sort flag
+  if (ts < unsorted_since_) {
     unsorted_since_ = 0;
   }
 }
 
 template <typename EDATA_T>
-void ImmutableCsr<EDATA_T>::dump_meta(const std::string& prefix) const {
-  std::string meta_file_path = prefix + ".meta";
-  FILE* meta_file_fd = fopen((prefix + ".meta").c_str(), "wb");
-  CHECK_EQ(fwrite(&unsorted_since_, sizeof(timestamp_t), 1, meta_file_fd), 1);
-  fflush(meta_file_fd);
-  fclose(meta_file_fd);
+void SingleImmutableCsr<EDATA_T>::Open(Checkpoint& ckp,
+                                       const ModuleDescriptor& descriptor,
+                                       MemoryLevel memory_level) {
+  nbr_list_buffer_ = ckp.OpenFile(
+      descriptor.get_path(ModuleDescriptor::kNbrListPath).value_or(""),
+      memory_level);
+  edge_num_.store(std::stoull(descriptor.get("edge_num").value_or("0")));
 }
 
 template <typename EDATA_T>
-void SingleImmutableCsr<EDATA_T>::open(const std::string& name,
-                                       const std::string& snapshot_dir,
-                                       const std::string& work_dir) {
-  nbr_list_buffer_ = OpenContainer(snapshot_dir + "/" + name + ".snbr",
-                                   tmp_dir(work_dir) + "/" + name + ".snbr",
-                                   MemoryLevel::kSyncToFile);
-}
-
-template <typename EDATA_T>
-void SingleImmutableCsr<EDATA_T>::open_in_memory(const std::string& prefix) {
-  nbr_list_buffer_ =
-      OpenContainer(prefix + ".snbr", "", MemoryLevel::kInMemory);
-}
-
-template <typename EDATA_T>
-void SingleImmutableCsr<EDATA_T>::open_with_hugepages(
-    const std::string& prefix) {
-  nbr_list_buffer_ =
-      OpenContainer(prefix + ".snbr", "", MemoryLevel::kHugePagePrefered);
-}
-
-template <typename EDATA_T>
-void SingleImmutableCsr<EDATA_T>::dump(const std::string& name,
-                                       const std::string& new_snapshot_dir) {
-  // TODO: opt with mv
-  nbr_list_buffer_->Dump(new_snapshot_dir + "/" + name + ".snbr");
+ModuleDescriptor SingleImmutableCsr<EDATA_T>::Dump(Checkpoint& ckp) {
+  ModuleDescriptor desc;
+  desc.module_type = ModuleTypeName();
+  desc.set_path(ModuleDescriptor::kNbrListPath, ckp.Commit(*nbr_list_buffer_));
+  desc.set("edge_num", std::to_string(edge_num_.load()));
+  return desc;
 }
 
 template <typename EDATA_T>
@@ -448,10 +407,8 @@ size_t SingleImmutableCsr<EDATA_T>::capacity() const {
 }
 
 template <typename EDATA_T>
-void SingleImmutableCsr<EDATA_T>::close() {
-  if (nbr_list_buffer_) {
-    nbr_list_buffer_->Close();
-  }
+void SingleImmutableCsr<EDATA_T>::Close() {
+  nbr_list_buffer_.reset();
 }
 
 template <typename EDATA_T>
@@ -466,13 +423,17 @@ void SingleImmutableCsr<EDATA_T>::batch_delete_vertices(
     if (src >= vnum) {
       continue;
     }
-    nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+    if (nbr_arr[src].neighbor != std::numeric_limits<vid_t>::max()) {
+      edge_num_.fetch_sub(1, std::memory_order_relaxed);
+      nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+    }
   }
   for (vid_t i = 0; i < vnum; ++i) {
     auto nbr = nbr_arr[i].neighbor;
     if (nbr != std::numeric_limits<vid_t>::max() &&
         dst_set.find(nbr) != dst_set.end()) {
       nbr_arr[i].neighbor = std::numeric_limits<vid_t>::max();
+      edge_num_.fetch_sub(1, std::memory_order_relaxed);
     }
   }
 }
@@ -489,7 +450,10 @@ void SingleImmutableCsr<EDATA_T>::batch_delete_edges(
     }
     vid_t dst = dst_list[i];
     if (nbr_arr[src].neighbor == dst) {
-      nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+      if (nbr_arr[src].neighbor != std::numeric_limits<vid_t>::max()) {
+        edge_num_.fetch_sub(1, std::memory_order_relaxed);
+        nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+      }
     }
   }
 }
@@ -505,7 +469,10 @@ void SingleImmutableCsr<EDATA_T>::batch_delete_edges(
       continue;
     }
     assert(edge.second == 0);
-    nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+    if (nbr_arr[src].neighbor != std::numeric_limits<vid_t>::max()) {
+      nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+      edge_num_.fetch_sub(1, std::memory_order_relaxed);
+    }
   }
 }
 
@@ -523,6 +490,7 @@ void SingleImmutableCsr<EDATA_T>::delete_edge(vid_t src, int32_t offset,
     return;
   }
   nbr_arr[src].neighbor = std::numeric_limits<vid_t>::max();
+  edge_num_.fetch_sub(1, std::memory_order_relaxed);
 }
 
 template <typename EDATA_T>
@@ -539,6 +507,7 @@ void SingleImmutableCsr<EDATA_T>::revert_delete_edge(vid_t src, vid_t nbr,
         "Attempting to revert delete on edge that is not deleted.");
   }
   nbr_arr[src].neighbor = nbr;
+  edge_num_.fetch_add(1, std::memory_order_relaxed);
 }
 
 template <typename EDATA_T>
@@ -553,8 +522,13 @@ void SingleImmutableCsr<EDATA_T>::batch_put_edges(
       continue;
     }
     auto& nbr = nbr_arr[src];
+    if (nbr.neighbor != std::numeric_limits<vid_t>::max()) {
+      LOG(ERROR) << "Fail to put edge, edge already exists.";
+      continue;
+    }
     nbr.neighbor = dst_list[i];
     nbr.data = data_list[i];
+    edge_num_.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
@@ -581,5 +555,29 @@ template class SingleImmutableCsr<Date>;
 template class SingleImmutableCsr<DateTime>;
 template class SingleImmutableCsr<Interval>;
 template class SingleImmutableCsr<bool>;
+
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, EmptyType);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, bool);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, int32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, uint32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, int64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, uint64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, float);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, double);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, Date);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, DateTime);
+NEUG_REGISTER_TEMPLATE_MODULE(ImmutableCsr, Interval);
+
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, EmptyType);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, bool);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, int32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, uint32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, int64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, uint64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, float);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, double);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, Date);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, DateTime);
+NEUG_REGISTER_TEMPLATE_MODULE(SingleImmutableCsr, Interval);
 
 }  // namespace neug

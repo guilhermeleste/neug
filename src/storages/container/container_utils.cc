@@ -65,7 +65,7 @@ std::unique_ptr<IDataContainer> OpenDataContainer(
       return ret;
     }
   }
-  case MemoryLevel::kHugePagePrefered: {
+  case MemoryLevel::kHugePagePreferred: {
     auto ret = std::make_unique<AnonHugeMMap>();
     if (std::filesystem::exists(file_name)) {
       ret->Open(file_name);
@@ -92,6 +92,8 @@ std::unique_ptr<IDataContainer> OpenContainer(const std::string& snapshot_file,
                                               MemoryLevel memory_level) {
   if (memory_level == MemoryLevel::kSyncToFile) {
     if (tmp_file.empty()) {
+      LOG(ERROR)
+          << "Temporary file path is required for disk-backed containers";
       THROW_INVALID_ARGUMENT_EXCEPTION(
           "Temporary file path is required for disk-backed containers");
     }

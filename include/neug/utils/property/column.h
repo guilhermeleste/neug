@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <ostream>
@@ -31,10 +31,13 @@
 #include <vector>
 
 #include "neug/config.h"
+#include "neug/storages/checkpoint.h"
 #include "neug/storages/container/container_utils.h"
 #include "neug/storages/container/file_header.h"
 #include "neug/storages/container/i_container.h"
-#include "neug/storages/file_names.h"
+#include "neug/storages/container/mmap_container.h"
+#include "neug/storages/module/module.h"
+#include "neug/storages/module/type_name.h"
 #include "neug/utils/exception/exception.h"
 #include "neug/utils/file_utils.h"
 #include "neug/utils/likely.h"
@@ -42,25 +45,16 @@
 #include "neug/utils/property/types.h"
 #include "neug/utils/serialization/out_archive.h"
 
+#include <glog/logging.h>
+
 namespace neug {
 class Table;
 
 std::string_view truncate_utf8(std::string_view str, size_t length);
 
-class ColumnBase {
+class ColumnBase : public Module {
  public:
   virtual ~ColumnBase() {}
-
-  virtual void open(const std::string& name, const std::string& snapshot_dir,
-                    const std::string& work_dir) = 0;
-
-  virtual void open_in_memory(const std::string& name) = 0;
-
-  virtual void open_with_hugepages(const std::string& name) = 0;
-
-  virtual void close() = 0;
-
-  virtual void dump(const std::string& filename) = 0;
 
   virtual size_t size() const = 0;
 
@@ -74,7 +68,7 @@ class ColumnBase {
   // value is fixed length, we should already have enough space allocated, so
   // insert_safe can be false.
   virtual void set_any(size_t index, const Property& value,
-                       bool insert_safe = false) = 0;
+                       bool insert_safe) = 0;
 
   virtual Property get_prop(size_t index) const = 0;
 
@@ -89,28 +83,24 @@ template <typename T>
 class TypedColumn : public ColumnBase {
  public:
   explicit TypedColumn() : size_(0) {}
-  ~TypedColumn() { close(); }
+  ~TypedColumn() = default;
 
-  void open(const std::string& name, const std::string& snapshot_dir,
-            const std::string& work_dir) override {
-    buffer_ = OpenContainer(snapshot_dir + "/" + name, work_dir + "/" + name,
-                            MemoryLevel::kSyncToFile);
+  void Open(Checkpoint& ckp, const ModuleDescriptor& desc,
+            MemoryLevel level) override {
+    assert(desc.module_type.empty() || desc.module_type == ModuleTypeName());
+    buffer_ = ckp.OpenFile(
+        desc.get_path(ModuleDescriptor::kDataPath).value_or(""), level);
     size_ = buffer_->GetDataSize() / sizeof(T);
   }
 
-  void open_in_memory(const std::string& name) override {
-    buffer_ = OpenContainer(name, "", MemoryLevel::kInMemory);
-    size_ = buffer_->GetDataSize() / sizeof(T);
+  void Close() { buffer_.reset(); }
+
+  ModuleDescriptor Dump(Checkpoint& ckp) override {
+    ModuleDescriptor desc;
+    desc.set_path(ModuleDescriptor::kDataPath, ckp.Commit(*buffer_));
+    desc.module_type = ModuleTypeName();
+    return desc;
   }
-
-  void open_with_hugepages(const std::string& name) override {
-    buffer_ = OpenContainer(name, "", MemoryLevel::kHugePagePrefered);
-    size_ = buffer_->GetDataSize() / sizeof(T);
-  }
-
-  void close() override { buffer_.reset(); }
-
-  void dump(const std::string& filename) override { buffer_->Dump(filename); }
 
   size_t size() const override { return size_; }
 
@@ -171,6 +161,17 @@ class TypedColumn : public ColumnBase {
   const IDataContainer& buffer() const { return *buffer_; }
   size_t buffer_size() const { return size_; }
 
+  inline T* mutable_data() { return reinterpret_cast<T*>(buffer_->GetData()); }
+  inline const T* data() const {
+    return reinterpret_cast<const T*>(buffer_->GetData());
+  }
+
+  std::string ModuleTypeName() const override { return type_name(); }
+
+  static std::string type_name() {
+    return "column<" + type_name_string<T>() + ">";
+  }
+
  private:
   std::unique_ptr<IDataContainer> buffer_;
   size_t size_;
@@ -193,14 +194,12 @@ template <>
 class TypedColumn<EmptyType> : public ColumnBase {
  public:
   explicit TypedColumn() {}
-  ~TypedColumn() {}
+  ~TypedColumn() = default;
 
-  void open(const std::string& name, const std::string& snapshot_dir,
-            const std::string& work_dir) override {}
-  void open_in_memory(const std::string& name) override {}
-  void open_with_hugepages(const std::string& name) override {}
-  void dump(const std::string& filename) override {}
-  void close() override {}
+  void Open(Checkpoint& ckp, const ModuleDescriptor& desc,
+            MemoryLevel level) override {}
+
+  ModuleDescriptor Dump(Checkpoint& ckp) override { return ModuleDescriptor(); }
   size_t size() const override { return 0; }
   void resize(size_t size) override {}
   void resize(size_t size, const Property& default_value) override {}
@@ -219,6 +218,10 @@ class TypedColumn<EmptyType> : public ColumnBase {
   EmptyType get_view(size_t index) const { return EmptyType(); }
 
   void ingest(uint32_t index, OutArchive& arc) override {}
+
+  std::string ModuleTypeName() const override { return type_name(); }
+
+  static std::string type_name() { return "column<empty>"; }
 };
 
 struct string_item {
@@ -245,101 +248,154 @@ class TypedColumn<std::string_view> : public ColumnBase {
     type_ = rhs.type_;
   }
 
-  ~TypedColumn() { close(); }
+  ~TypedColumn() = default;
 
-  void open(const std::string& name, const std::string& snapshot_dir,
-            const std::string& work_dir) override {
-    items_buffer_ = OpenContainer(snapshot_dir + "/" + name + ".items",
-                                  work_dir + "/" + name + ".items",
-                                  MemoryLevel::kSyncToFile);
-    data_buffer_ = OpenContainer(snapshot_dir + "/" + name + ".data",
-                                 work_dir + "/" + name + ".data",
-                                 MemoryLevel::kSyncToFile);
+  void Open(Checkpoint& ckp, const ModuleDescriptor& desc,
+            MemoryLevel level) override {
+    items_buffer_ = ckp.OpenFile(
+        desc.get_path(ModuleDescriptor::kItemsPath).value_or(""), level);
+    data_buffer_ = ckp.OpenFile(
+        desc.get_path(ModuleDescriptor::kDataPath).value_or(""), level);
     size_ = items_buffer_->GetDataSize() / sizeof(string_item);
-    init_pos(snapshot_dir + "/" + name + ".pos");
+    pos_.store(std::stoull(desc.get("pos").value_or("0")));
+    assert(pos_.load() <= data_buffer_->GetDataSize());
   }
 
-  void open_in_memory(const std::string& prefix) override {
-    items_buffer_ =
-        OpenContainer(prefix + ".items", "", MemoryLevel::kInMemory);
-    data_buffer_ = OpenContainer(prefix + ".data", "", MemoryLevel::kInMemory);
-    size_ = items_buffer_->GetDataSize() / sizeof(string_item);
-    init_pos(prefix + ".pos");
+  void Close() {
+    items_buffer_.reset();
+    data_buffer_.reset();
   }
 
-  void open_with_hugepages(const std::string& prefix) override {
-    items_buffer_ =
-        OpenContainer(prefix + ".items", "", MemoryLevel::kHugePagePrefered);
-    data_buffer_ =
-        OpenContainer(prefix + ".data", "", MemoryLevel::kHugePagePrefered);
-    size_ = items_buffer_->GetDataSize() / sizeof(string_item);
-    init_pos(prefix + ".pos");
-  }
-
-  void close() override {
-    if (items_buffer_) {
-      items_buffer_->Close();
+  bool is_data_unmodified() const {
+    if (items_buffer_->IsDirty() || items_buffer_->GetPath().empty()) {
+      return false;
     }
-    if (data_buffer_) {
-      data_buffer_->Close();
-    }
-  }
-
-  void dump(const std::string& filename) override {
-    // Compact before dumping.  StringColumn uses an append-only strategy for
-    // updates, leaving stale copies in data_buffer_.  When there is reused
-    // data we stream the compacted bytes directly to the output file in a
-    // single forward pass, computing MD5 on-the-fly, which avoids:
-    //   1. A temporary buffer allocation (effective_size bytes).
-    //   2. The memcpy from temp_buf → data_buffer_.
-    //   3. The subsequent container Dump() copy.
-    // When there is nothing to compact we fall through and let the container
-    // handle the write as usual (e.g. reflink / copy_file_range via
-    // FileSharedMMap::Dump, or a single fwrite via MMapContainer::Dump).
-    size_t pos_val;
-    if (size_ > 0) {
-      auto plan = prepare_compaction_plan();
-      if (plan.reused_size > 0) {
-        // Stream path: source (data_buffer_) and destination (snapshot file)
-        // are always different files, so there is no aliasing hazard.
-        pos_val = stream_compact_and_dump(plan, filename + ".data");
-        write_file(filename + ".pos", &pos_val, sizeof(pos_val), 1);
-        if (items_buffer_) {
-          items_buffer_->Dump(filename + ".items");
-        }
-        items_buffer_->Close();
-        data_buffer_->Close();
-        return;
-      }
-      pos_val = pos_.load();
+    auto casted_data = dynamic_cast<MMapContainer*>(data_buffer_.get());
+    if (casted_data && !casted_data->GetPath().empty() &&
+        casted_data->GetHeader()) {
+      FileHeader data_header;
+      MD5((unsigned char*) data_buffer_->GetData(), pos_.load(),
+          data_header.data_md5);
+      return memcmp(casted_data->GetHeader()->data_md5, data_header.data_md5,
+                    sizeof(data_header.data_md5)) == 0;
     } else {
-      pos_val = pos_.load();
+      return false;
     }
-    // No-compaction path: dump containers as-is.
-    write_file(filename + ".pos", &pos_val, sizeof(pos_val), 1);
-    if (items_buffer_) {
-      items_buffer_->Dump(filename + ".items");
+  }
+
+  ModuleDescriptor Dump(Checkpoint& ckp) override {
+    ModuleDescriptor desc;
+    desc.module_type = ModuleTypeName();
+    if (!items_buffer_ || !data_buffer_) {
+      THROW_RUNTIME_ERROR("Buffers not initialized for dumping");
     }
-    if (data_buffer_) {
-      data_buffer_->Dump(filename + ".data");
+    // Fast path: neither buffer has been modified – link existing files into
+    // snapshot_dir without rewriting any data.
+    if (is_data_unmodified()) {
+      desc.set("pos", std::to_string(pos_.load()));
+      desc.set_path(ModuleDescriptor::kItemsPath,
+                    ckp.LinkToSnapshot(items_buffer_->GetPath()));
+      desc.set_path(ModuleDescriptor::kDataPath,
+                    ckp.LinkToSnapshot(data_buffer_->GetPath()));
+      return desc;
     }
-    items_buffer_->Close();
-    data_buffer_->Close();
+    auto data_uuid = ckp.CreateRuntimeObject();
+    auto data_file = ckp.runtime_dir() + "/" + data_uuid;
+    std::ofstream data_out(data_file, std::ios::binary);
+    if (!data_out) {
+      THROW_IO_EXCEPTION("Failed to open file for dumping: " + data_file);
+    }
+    FileHeader header;
+    data_out.write(reinterpret_cast<const char*>(&header.data_md5),
+                   sizeof(header.data_md5));
+    auto item_uuid = ckp.CreateRuntimeObject();
+    auto item_file = ckp.runtime_dir() + "/" + item_uuid;
+    std::ofstream item_out(item_file, std::ios::binary);
+    if (!item_out) {
+      THROW_IO_EXCEPTION("Failed to open file for dumping: " + item_file);
+    }
+    item_out.write(reinterpret_cast<const char*>(&header.data_md5),
+                   sizeof(header.data_md5));
+    auto raw_items =
+        reinterpret_cast<const string_item*>(items_buffer_->GetData());
+    auto raw_data = reinterpret_cast<const char*>(data_buffer_->GetData());
+    MD5_CTX data_ctx, item_ctx;
+    MD5_Init(&data_ctx);
+    MD5_Init(&item_ctx);
+    string_item cur_item = {0, 0};
+    size_t offset = 0;
+    size_t count_no_empty = 0;
+    string_item pre_item = {0, 0};
+    for (size_t i = 0; i < size_; ++i) {
+      const auto& item = raw_items[i];
+      if (item.offset == pre_item.offset && item.length == pre_item.length) {
+        // If the current item is the same as the previous one, we can reuse the
+        // offset and length without writing duplicate data.
+        MD5_Update(&item_ctx, &cur_item, sizeof(cur_item));
+        item_out.write(reinterpret_cast<const char*>(&cur_item),
+                       sizeof(cur_item));
+        continue;
+      }
+      pre_item = item;
+      data_out.write(raw_data + item.offset, item.length);
+      cur_item = {offset, item.length};
+      MD5_Update(&data_ctx, raw_data + item.offset, item.length);
+      MD5_Update(&item_ctx, &cur_item, sizeof(cur_item));
+      item_out.write(reinterpret_cast<const char*>(&cur_item),
+                     sizeof(cur_item));
+      offset += item.length;
+      if (item.length > 0) {
+        count_no_empty++;
+      }
+    }
+
+    MD5_Final(header.data_md5, &data_ctx);
+
+    data_out.seekp(0);
+    data_out.write(reinterpret_cast<const char*>(&header.data_md5),
+                   sizeof(header.data_md5));
+    MD5_Final(header.data_md5, &item_ctx);
+    item_out.seekp(0);
+    item_out.write(reinterpret_cast<const char*>(&header.data_md5),
+                   sizeof(header.data_md5));
+
+    data_out.flush();
+    item_out.flush();
+    data_out.close();
+    item_out.close();
+
+    size_t avg_size = count_no_empty > 0 ? offset / count_no_empty : width_;
+    size_t count = std::max(size_ + (size_ + 3) / 4, 4096UL);
+    size_t truncated_size = avg_size * count + sizeof(FileHeader);
+    int rt = truncate(data_file.c_str(), truncated_size);
+    if (rt != 0) {
+      std::stringstream ss;
+      ss << "Failed to truncate file: " << data_file
+         << " to size: " << truncated_size << ", error: " << strerror(errno);
+      LOG(ERROR) << ss.str();
+      THROW_IO_EXCEPTION(ss.str());
+    }
+
+    desc.set("pos", std::to_string(offset));
+    desc.set_path(ModuleDescriptor::kItemsPath,
+                  ckp.CommitRuntimeObject(item_uuid));
+    desc.set_path(ModuleDescriptor::kDataPath,
+                  ckp.CommitRuntimeObject(data_uuid));
+    return desc;
   }
 
   size_t size() const override { return size_; }
 
   void resize(size_t size) override {
-    std::unique_lock<std::shared_mutex> lock(rw_mutex_);
-    // Number of brand-new item slots being added (may be 0 for shrinks).
-    size_t new_items = (size > size_) ? (size - size_) : 0;
-    items_buffer_->Resize(size * sizeof(string_item));
-    // Guarantee the data buffer has room for new_items strings each up to
-    // width_ bytes.  Using width_ (not avg) makes set_value() safe for any
-    // string within the column's declared maximum length.
-    // Never shrink the allocation: pos_.load() bytes are already committed.
-    size_t needed = pos_.load() + new_items * static_cast<size_t>(width_);
-    data_buffer_->Resize(std::max(needed, data_buffer_->GetDataSize()));
+    if (items_buffer_->GetDataSize() == 0) {
+      items_buffer_->Resize(size * sizeof(string_item));
+      data_buffer_->Resize(
+          std::max(size * static_cast<size_t>(width_), pos_.load()));
+    } else {
+      size_t avg_size = string_avg_size() > 0 ? string_avg_size() : width_;
+      items_buffer_->Resize(size * sizeof(string_item));
+      data_buffer_->Resize(std::max(size * avg_size, pos_.load()));
+    }
     size_ = size;
   }
 
@@ -347,7 +403,6 @@ class TypedColumn<std::string_view> : public ColumnBase {
     if (default_value.type() != type()) {
       THROW_RUNTIME_ERROR("Default value type does not match column type");
     }
-    std::unique_lock<std::shared_mutex> lock(rw_mutex_);
     size_t old_size = size_;
     size_ = size;
     auto default_str = PropUtils<std::string_view>::to_typed(default_value);
@@ -356,7 +411,7 @@ class TypedColumn<std::string_view> : public ColumnBase {
     size_t new_items = (size > old_size) ? (size - old_size) : 0;
     items_buffer_->Resize(size * sizeof(string_item));
     size_t needed = pos_.load() + new_items * static_cast<size_t>(width_);
-    data_buffer_->Resize(std::max(needed, data_buffer_->GetDataSize()));
+    data_buffer_->Resize(std::max(needed, size * string_avg_size()));
 
     if (default_str.size() == 0) {
       return;
@@ -395,15 +450,31 @@ class TypedColumn<std::string_view> : public ColumnBase {
     }
   }
 
+  // When insert_safe is set to true, concurrency control should be guaranteed
+  // by caller.
   void set_any(size_t idx, const Property& value, bool insert_safe) override {
-    if (insert_safe) {
-      set_value_safe(idx, PropUtils<std::string_view>::to_typed(value));
-    } else {
-      set_value(idx, value.as_string_view());
+    if (idx >= size_) {
+      THROW_RUNTIME_ERROR("Index out of range");
     }
+    auto dst_value = value.as_string_view();
+    if (pos_.load() + dst_value.size() > data_buffer_->GetDataSize()) {
+      if (insert_safe) {
+        size_t new_avg_width = (pos_.load() + idx) / (idx + 1);
+        size_t new_len =
+            std::max(size_ * new_avg_width, pos_.load() + dst_value.size());
+        data_buffer_->Resize(new_len);
+      } else {
+        std::stringstream ss;
+        ss << "Not enough space in buffer for new value, and insert_safe is "
+              "false. "
+           << "Current buffer size: " << data_buffer_->GetDataSize()
+           << ", current position: " << pos_.load()
+           << ", new value size: " << dst_value.size();
+        THROW_STORAGE_EXCEPTION(ss.str());
+      }
+    }
+    set_value(idx, dst_value);
   }
-
-  void set_value_safe(size_t idx, const std::string_view& value);
 
   inline std::string_view get_view(size_t idx) const {
     const auto& item = get_string_item(idx);
@@ -426,17 +497,19 @@ class TypedColumn<std::string_view> : public ColumnBase {
     set_value(index, val);
   }
 
- private:
-  inline void init_pos(const std::string& file_path) {
-    if (std::filesystem::exists(file_path)) {
-      size_t pos_val = 0;
-      read_file(file_path, &pos_val, sizeof(pos_val), 1);
-      pos_.store(pos_val);
-    } else {
-      pos_.store(0);
+  size_t available_space() const {
+    if (!data_buffer_) {
+      return 0;
     }
+    assert(pos_.load() <= data_buffer_->GetDataSize());
+    return data_buffer_->GetDataSize() - pos_.load();
   }
 
+  std::string ModuleTypeName() const override { return type_name(); }
+
+  static std::string type_name() { return "column<string>"; }
+
+ private:
   inline string_item get_string_item(size_t idx) const {
     assert(idx < size_);
     auto raw_items =
@@ -450,139 +523,34 @@ class TypedColumn<std::string_view> : public ColumnBase {
     raw_items[idx] = item;
   }
 
-  // Descriptor of a single live string entry used during compaction.
-  struct CompactionPlan {
-    struct Entry {
-      size_t index;     // position in items array
-      uint64_t offset;  // current byte offset in the data buffer
-      uint32_t length;  // byte length of the string
-    };
-    std::vector<Entry> entries;
-    size_t total_size = 0;   // sum of all entry lengths (includes duplicates)
-    size_t reused_size = 0;  // bytes shared by entries that point to the same
-                             // offset (i.e. slots updated with the same value)
-  };
-
-  // Scan items and build a compaction plan that records which offsets are
-  // shared across multiple item slots (those are stale copies from updates).
-  CompactionPlan prepare_compaction_plan() const {
-    CompactionPlan plan;
-    plan.entries.reserve(size_);
-    std::unordered_set<uint64_t> seen_offsets;
+  size_t string_avg_size() const {
+    if (size_ == 0) {
+      return 0;
+    }
+    size_t total_length = 0;
+    size_t non_zero_count = 0;
     for (size_t i = 0; i < size_; ++i) {
-      const auto item = get_string_item(i);
-      plan.total_size += item.length;
-      plan.entries.push_back(
-          {i, item.offset, static_cast<uint32_t>(item.length)});
-      if (item.length > 0) {
-        if (seen_offsets.count(item.offset)) {
-          // This offset is already referenced by an earlier slot: the current
-          // slot was set via resize(default) and shares the same backing bytes.
-          plan.reused_size += item.length;
-        } else {
-          seen_offsets.insert(item.offset);
-        }
+      if (get_string_item(i).length > 0) {
+        total_length += get_string_item(i).length;
+        non_zero_count++;
       }
     }
-    return plan;
-  }
-
-  // Remove stale string data produced by update operations (which append a new
-  // copy without reclaiming the old one) by streaming compacted bytes directly
-  // to data_filename.
-  //   * Iterates plan.entries in order; unique offsets are fwrite'd once.
-  //   * MD5 is accumulated in a single forward pass and written into the
-  //     FileHeader at position 0 via fseek after all data is written.
-  //   * item offsets in items_buffer_ are updated to match the new layout.
-  //   * pos_ is updated to effective_size for future appends.
-  // Returns the effective (compacted) data size.
-  size_t stream_compact_and_dump(const CompactionPlan& plan,
-                                 const std::string& data_filename) {
-    auto parent_dir = std::filesystem::path(data_filename).parent_path();
-    if (!parent_dir.empty()) {
-      std::filesystem::create_directories(parent_dir);
-    }
-    FILE* fout = fopen(data_filename.c_str(), "wb");
-    if (!fout) {
-      THROW_IO_EXCEPTION("Failed to open output for stream compaction: " +
-                         data_filename);
-    }
-
-    // Write a placeholder header; will be overwritten after MD5 is finalised.
-    FileHeader header{};
-    if (fwrite(&header, sizeof(header), 1, fout) != 1) {
-      fclose(fout);
-      THROW_IO_EXCEPTION("Failed to write placeholder header: " +
-                         data_filename);
-    }
-
-    const auto* raw_data =
-        reinterpret_cast<const char*>(data_buffer_->GetData());
-    size_t write_offset = 0;
-    std::unordered_map<uint64_t, uint64_t> old_offset_to_new;
-    MD5_CTX md5_ctx;
-    MD5_Init(&md5_ctx);
-
-    for (const auto& entry : plan.entries) {
-      if (entry.length > 0) {
-        auto it = old_offset_to_new.find(entry.offset);
-        if (it != old_offset_to_new.end()) {
-          // Duplicate offset: already written; just remap the item.
-          set_string_item(entry.index,
-                          {it->second, static_cast<uint32_t>(entry.length)});
-          continue;
-        }
-        old_offset_to_new.emplace(entry.offset, write_offset);
-        const char* src = raw_data + entry.offset;
-        if (fwrite(src, 1, entry.length, fout) != entry.length) {
-          fclose(fout);
-          THROW_IO_EXCEPTION("Failed to fwrite compacted data to: " +
-                             data_filename);
-        }
-        MD5_Update(&md5_ctx, src, entry.length);
-      }
-      set_string_item(entry.index,
-                      {write_offset, static_cast<uint32_t>(entry.length)});
-      write_offset += entry.length;
-    }
-
-    // Seek back and stamp the real MD5 into the file header.
-    MD5_Final(header.data_md5, &md5_ctx);
-    if (fseek(fout, 0, SEEK_SET) != 0) {
-      fclose(fout);
-      THROW_IO_EXCEPTION("Failed to seek to header in: " + data_filename);
-    }
-    if (fwrite(&header, sizeof(header), 1, fout) != 1) {
-      fclose(fout);
-      THROW_IO_EXCEPTION("Failed to write final header to: " + data_filename);
-    }
-    if (fflush(fout) != 0) {
-      fclose(fout);
-      THROW_IO_EXCEPTION("Failed to fflush: " + data_filename);
-    }
-    if (fclose(fout) != 0) {
-      THROW_IO_EXCEPTION("Failed to fclose: " + data_filename);
-    }
-
-    size_t effective_size = plan.total_size - plan.reused_size;
-    pos_.store(effective_size);
-    VLOG(1) << "StringColumn stream compaction: " << plan.total_size << " -> "
-            << effective_size << " bytes saved to " << data_filename;
-    return effective_size;
+    return non_zero_count > 0
+               ? (total_length + non_zero_count - 1) / non_zero_count
+               : 0;
   }
 
   std::unique_ptr<IDataContainer> items_buffer_;
   std::unique_ptr<IDataContainer> data_buffer_;
   size_t size_;
   std::atomic<size_t> pos_;
-  std::shared_mutex rw_mutex_;
   uint16_t width_;
   DataTypeId type_;
 };
 
 using StringColumn = TypedColumn<std::string_view>;
 
-std::shared_ptr<ColumnBase> CreateColumn(DataType type);
+std::unique_ptr<ColumnBase> CreateColumn(DataType type);
 
 /// Create RefColumn for ease of usage for hqps
 class RefColumnBase {

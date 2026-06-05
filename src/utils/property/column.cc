@@ -18,6 +18,7 @@
 #include <limits>
 
 #include "neug/storages/container/container_utils.h"
+#include "neug/storages/module/module_factory.h"
 #include "neug/utils/id_indexer.h"
 #include "neug/utils/property/table.h"
 #include "neug/utils/property/types.h"
@@ -52,13 +53,13 @@ std::string_view truncate_utf8(std::string_view str, size_t length) {
   return str.substr(0, byte_count);
 }
 
-std::shared_ptr<ColumnBase> CreateColumn(DataType type) {
+std::unique_ptr<ColumnBase> CreateColumn(DataType type) {
   auto type_id = type.id();
   auto extra_type_info = type.RawExtraTypeInfo();
   switch (type_id) {
 #define TYPE_DISPATCHER(enum_val, type) \
   case DataTypeId::enum_val:            \
-    return std::make_shared<TypedColumn<type>>();
+    return std::make_unique<TypedColumn<type>>();
     FOR_EACH_DATA_TYPE_NO_STRING(TYPE_DISPATCHER)
 #undef TYPE_DISPATCHER
   case DataTypeId::kVarchar: {
@@ -69,47 +70,15 @@ std::shared_ptr<ColumnBase> CreateColumn(DataType type) {
         max_length = str_info->max_length;
       }
     }
-    return std::make_shared<StringColumn>(max_length);
+    return std::make_unique<StringColumn>(max_length);
   }
   case DataTypeId::kEmpty: {
-    return std::make_shared<TypedColumn<EmptyType>>();
+    return std::make_unique<TypedColumn<EmptyType>>();
   }
   default: {
     THROW_NOT_SUPPORTED_EXCEPTION("Unsupported type for column: " +
                                   type.ToString());
   }
-  }
-}
-
-void TypedColumn<std::string_view>::set_value_safe(
-    size_t idx, const std::string_view& value) {
-  std::shared_lock<std::shared_mutex> lock(rw_mutex_);
-  if (idx < size_) {
-    std::string_view v = value;
-    if (v.size() >= width_) {
-      v = truncate_utf8(v, width_);
-    }
-    size_t offset = pos_.fetch_add(v.size());
-    if (pos_.load() > data_buffer_->GetDataSize()) {
-      lock.unlock();
-      std::unique_lock<std::shared_mutex> w_lock(rw_mutex_);
-      if (pos_.load() > data_buffer_->GetDataSize()) {
-        size_t new_avg_width = (pos_.load() + idx) / (idx + 1);
-        size_t new_len = std::max(size_ * new_avg_width, pos_.load());
-        data_buffer_->Resize(new_len);
-      }
-      w_lock.unlock();
-      lock.lock();
-    }
-    auto raw_items = reinterpret_cast<string_item*>(items_buffer_->GetData());
-    auto raw_data = reinterpret_cast<char*>(data_buffer_->GetData());
-    raw_items[idx] = {offset, static_cast<uint32_t>(v.size())};
-    assert(offset + v.size() <= data_buffer_->GetDataSize());
-    std::memcpy(raw_data + offset, v.data(), v.size());
-  } else {
-    THROW_INDEX_EXCEPTION(
-        "Index out of range in set_value_safe: " + std::to_string(idx) +
-        " for size: " + std::to_string(size_));
   }
 }
 
@@ -132,5 +101,18 @@ std::shared_ptr<RefColumnBase> CreateRefColumn(const ColumnBase& column) {
   }
   }
 }
+
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, EmptyType);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, bool);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, int32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, uint32_t);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, int64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, uint64_t);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, float);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, double);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, Date);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, DateTime);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, Interval);
+NEUG_REGISTER_TEMPLATE_MODULE(TypedColumn, std::string_view);
 
 }  // namespace neug

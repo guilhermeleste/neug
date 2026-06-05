@@ -18,20 +18,24 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "neug/common/extra_type_info.h"
+#include "neug/storages/checkpoint_manager.h"
 #include "neug/storages/container/file_header.h"
-#include "neug/storages/file_names.h"
+#include "neug/storages/module/module_factory.h"
+#include "neug/storages/module/type_name.h"
 #include "neug/utils/id_indexer.h"
 #include "neug/utils/property/property.h"
+#include "unittest/utils.h"
 
 namespace neug {
-namespace {
+
+// OpenIndexerLegacy / DumpIndexerLegacy live in unittest/utils.h so multiple
+// test binaries (test_indexer, test_edge_table, ...) can share them.
 
 class LFIndexerTest : public ::testing::Test {
  protected:
@@ -40,30 +44,16 @@ class LFIndexerTest : public ::testing::Test {
         "/tmp/lf_indexer_test_" +
         std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count());
-    snapshot_dir_ = test_dir_ + "/snapshot";
-    checkpoint_dir_ = test_dir_ + "/checkpoint";
-    work_dir_ = test_dir_ + "/work";
     if (std::filesystem::exists(test_dir_)) {
       std::filesystem::remove_all(test_dir_);
     }
-
-    std::filesystem::create_directories(snapshot_dir_);
-    std::filesystem::create_directories(checkpoint_dir_);
-    std::filesystem::create_directories(tmp_dir(work_dir_));
+    std::filesystem::create_directories(test_dir_);
   }
 
   void TearDown() override {
     if (std::filesystem::exists(test_dir_)) {
       std::filesystem::remove_all(test_dir_);
     }
-  }
-
-  static void CreateEmptyIndicesFile(const std::string& base_path) {
-    std::filesystem::create_directories(
-        std::filesystem::path(base_path).parent_path());
-    FileHeader header{};
-    std::ofstream fout(base_path + ".indices", std::ios::binary);
-    fout.write(reinterpret_cast<const char*>(&header), sizeof(header));
   }
 
   template <typename INDEX_T>
@@ -100,23 +90,19 @@ class LFIndexerTest : public ::testing::Test {
   }
 
   std::string test_dir_;
-  std::string snapshot_dir_;
-  std::string checkpoint_dir_;
-  std::string work_dir_;
 };
 
 TEST_F(LFIndexerTest, SupportsCoreMutableInterfacesInMemory) {
-  const std::string base_path = test_dir_ + "/core_index";
-  CreateEmptyIndicesFile(base_path);
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
 
   LFIndexer<uint32_t> indexer;
-  EXPECT_EQ(LFIndexer<uint32_t>::prefix(), "indexer");
+  OpenIndexerLegacy(indexer, *ckp, DataType(DataTypeId::kInt64),
+                    CheckpointManifest(), MemoryLevel::kInMemory);
 
-  indexer.init(DataTypeId::kInt64);
   EXPECT_EQ(indexer.get_type(), DataTypeId::kInt64);
   EXPECT_EQ(indexer.get_keys().type(), DataTypeId::kInt64);
-
-  indexer.open_in_memory(base_path);
   EXPECT_EQ(indexer.size(), 0U);
   EXPECT_EQ(indexer.capacity(), 0U);
 
@@ -124,9 +110,9 @@ TEST_F(LFIndexerTest, SupportsCoreMutableInterfacesInMemory) {
   EXPECT_GE(indexer.capacity(), 8U);
 
   std::vector<int64_t> values = {7, 11, 13, 17, 19, 23, 29, 31, 37, 41};
-  EXPECT_EQ(indexer.insert(Property::from_int64(values[0])), 0U);
+  EXPECT_EQ(indexer.insert(Property::from_int64(values[0]), false), 0U);
   for (size_t i = 1; i < values.size(); ++i) {
-    EXPECT_EQ(indexer.insert_safe(Property::from_int64(values[i])),
+    EXPECT_EQ(indexer.insert(Property::from_int64(values[i]), true),
               static_cast<uint32_t>(i));
   }
 
@@ -147,87 +133,86 @@ TEST_F(LFIndexerTest, SupportsCoreMutableInterfacesInMemory) {
   EXPECT_GE(indexer.capacity(), 64U);
   ExpectInt64Values(indexer, values);
 
-  indexer.close();
+  indexer.Close();
 }
 
 TEST_F(LFIndexerTest, DumpsAndOpensAcrossBackends) {
-  const std::string name = "persisted_index";
-  const std::string in_memory_base = test_dir_ + "/persisted_seed";
-  CreateEmptyIndicesFile(in_memory_base);
-
-  LFIndexer<uint32_t> writable;
-  writable.init(DataTypeId::kInt64);
-  writable.open_in_memory(in_memory_base);
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
 
   std::vector<int64_t> values = {5, 10, 15, 20};
-  for (const auto& value : values) {
-    writable.insert_safe(Property::from_int64(value));
+  DataType int64_type(DataTypeId::kInt64);
+  CheckpointManifest desc;
+  {
+    LFIndexer<uint32_t> writable;
+    OpenIndexerLegacy(writable, *ckp, int64_type, CheckpointManifest(),
+                      MemoryLevel::kInMemory);
+    for (const auto& value : values) {
+      writable.insert(Property::from_int64(value), true);
+    }
+    desc = DumpIndexerLegacy(writable, *ckp);
+  }
+  {
+    LFIndexer<uint32_t> readonly;
+    OpenIndexerLegacy(readonly, *ckp, int64_type, desc, MemoryLevel::kInMemory);
+    ExpectInt64Values(readonly, values);
+    EXPECT_EQ(readonly.get_keys().type(), DataTypeId::kInt64);
+    readonly.Close();
+
+    // The dumped meta should advertise the two indexer leaves.
+    EXPECT_TRUE(desc.has_module(kIndexerKeys));
+    EXPECT_TRUE(desc.has_module(kIndexerIndices));
   }
 
-  writable.dump(name, snapshot_dir_);
-  EXPECT_TRUE(std::filesystem::exists(snapshot_dir_ + "/" + name + ".meta"));
-  EXPECT_TRUE(std::filesystem::exists(snapshot_dir_ + "/" + name + ".keys"));
-  EXPECT_TRUE(std::filesystem::exists(snapshot_dir_ + "/" + name + ".indices"));
-
-  LFIndexer<uint32_t> copied_to_workdir;
-  copied_to_workdir.init(DataTypeId::kInt64);
-  copied_to_workdir.open(name, snapshot_dir_, work_dir_);
-  ExpectInt64Values(copied_to_workdir, values);
-  EXPECT_TRUE(
-      std::filesystem::exists(tmp_dir(work_dir_) + "/" + name + ".keys"));
-  EXPECT_TRUE(
-      std::filesystem::exists(tmp_dir(work_dir_) + "/" + name + ".indices"));
-  copied_to_workdir.drop();
-
-  LFIndexer<uint32_t> in_memory;
-  in_memory.init(DataTypeId::kInt64);
-  in_memory.open_in_memory(snapshot_dir_ + "/" + name);
-  ExpectInt64Values(in_memory, values);
-  in_memory.close();
-
-  LFIndexer<uint32_t> hugepage_indexer;
-  hugepage_indexer.init(DataTypeId::kInt64);
-  hugepage_indexer.open_with_hugepages(snapshot_dir_ + "/" + name);
-  ExpectInt64Values(hugepage_indexer, values);
-  hugepage_indexer.close();
+  {
+    LFIndexer<uint32_t> hugepage_idx;
+    OpenIndexerLegacy(hugepage_idx, *ckp, int64_type, desc,
+                      MemoryLevel::kHugePagePreferred);
+    ExpectInt64Values(hugepage_idx, values);
+    hugepage_idx.Close();
+  }
+  {
+    LFIndexer<uint32_t> sync_idx;
+    OpenIndexerLegacy(sync_idx, *ckp, int64_type, desc,
+                      MemoryLevel::kSyncToFile);
+    ExpectInt64Values(sync_idx, values);
+    sync_idx.Close();
+  }
 }
 
 TEST_F(LFIndexerTest, SupportsBuildEmptySwapAndVarcharKeys) {
-  const std::string empty_name = "empty_index";
-  const std::string empty_dir = test_dir_ + "/empty_dir";
-  std::filesystem::create_directories(empty_dir);
-  CreateEmptyIndicesFile(empty_dir + "/" + empty_name);
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
 
+  DataType int64_type(DataTypeId::kInt64);
   LFIndexer<uint32_t> empty_indexer;
-  empty_indexer.init(DataTypeId::kInt64);
-  empty_indexer.build_empty_LFIndexer(empty_name, "", empty_dir);
-  EXPECT_TRUE(std::filesystem::exists(empty_dir + "/" + empty_name + ".meta"));
-  EXPECT_TRUE(
-      std::filesystem::exists(empty_dir + "/" + empty_name + ".indices"));
+  OpenIndexerLegacy(empty_indexer, *ckp, int64_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+  CheckpointManifest empty_dump = DumpIndexerLegacy(empty_indexer, *ckp);
+  EXPECT_TRUE(empty_dump.has_module(kIndexerIndices));
+  empty_indexer.Close();
 
-  const std::string lhs_base = test_dir_ + "/lhs_varchar";
-  const std::string rhs_base = test_dir_ + "/rhs_varchar";
-  CreateEmptyIndicesFile(lhs_base);
-  CreateEmptyIndicesFile(rhs_base);
+  DataType varchar_type(DataTypeId::kVarchar);
 
-  auto string_type_info = std::make_shared<StringTypeInfo>(64);
   LFIndexer<uint32_t> lhs;
-  lhs.init(DataTypeId::kVarchar, string_type_info);
-  lhs.open_in_memory(lhs_base);
+  OpenIndexerLegacy(lhs, *ckp, varchar_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
   lhs.reserve(4);
 
   LFIndexer<uint32_t> rhs;
-  rhs.init(DataTypeId::kVarchar, string_type_info);
-  rhs.open_in_memory(rhs_base);
+  OpenIndexerLegacy(rhs, *ckp, varchar_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
   rhs.reserve(4);
 
   std::vector<std::string> lhs_values = {"alice", "bob"};
   std::vector<std::string> rhs_values = {"carol", "dave", "erin"};
   for (const auto& value : lhs_values) {
-    lhs.insert_safe(Property::from_string_view(value));
+    lhs.insert(Property::from_string_view(value), true);
   }
   for (const auto& value : rhs_values) {
-    rhs.insert_safe(Property::from_string_view(value));
+    rhs.insert(Property::from_string_view(value), true);
   }
 
   EXPECT_EQ(lhs.get_type(), DataTypeId::kVarchar);
@@ -239,9 +224,338 @@ TEST_F(LFIndexerTest, SupportsBuildEmptySwapAndVarcharKeys) {
   ExpectStringValues(lhs, rhs_values);
   ExpectStringValues(rhs, lhs_values);
 
-  rhs.drop();
-  lhs.close();
+  rhs.Close();
+  lhs.Close();
 }
 
-}  // namespace
+TEST_F(LFIndexerTest, VarcharReserveEnablesNonSafeInsert) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(64);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  constexpr size_t N = 8;
+  indexer.reserve(N);
+  EXPECT_GE(indexer.capacity(), N);
+
+  std::vector<std::string> values = {"alpha",   "beta", "gamma", "delta",
+                                     "epsilon", "zeta", "eta",   "theta"};
+  for (const auto& v : values) {
+    indexer.insert(Property::from_string_view(v), false);
+  }
+  ExpectStringValues(indexer, values);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharReserveMaxWidthStrings) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  constexpr uint16_t kMaxWidth = 16;
+  auto type_info = std::make_shared<StringTypeInfo>(kMaxWidth);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  constexpr size_t N = 6;
+  indexer.reserve(N);
+  EXPECT_GE(indexer.capacity(), N);
+
+  std::vector<std::string> values;
+  for (size_t i = 0; i < N; ++i) {
+    values.push_back(std::string(kMaxWidth - 1, static_cast<char>('a' + i)));
+  }
+  for (const auto& v : values) {
+    indexer.insert(Property::from_string_view(v), false);
+  }
+  ExpectStringValues(indexer, values);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharMultipleReservesAccumulateDataSpace) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(32);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  indexer.reserve(4);
+  std::vector<std::string> batch1 = {"alice", "bob", "carol", "dave"};
+  for (const auto& v : batch1) {
+    indexer.insert(Property::from_string_view(v), false);
+  }
+  ExpectStringValues(indexer, batch1);
+
+  indexer.reserve(8);
+  std::vector<std::string> batch2 = {"erin", "frank", "grace", "heidi"};
+  for (const auto& v : batch2) {
+    indexer.insert(Property::from_string_view(v), false);
+  }
+
+  std::vector<std::string> all = {"alice", "bob",   "carol", "dave",
+                                  "erin",  "frank", "grace", "heidi"};
+  ExpectStringValues(indexer, all);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharReserveSmallerThanCapacityIsNoop) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(32);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  indexer.reserve(16);
+  EXPECT_GE(indexer.capacity(), 16U);
+  size_t size_before = indexer.size();
+  indexer.insert(Property::from_string_view("foo"), false);
+  indexer.insert(Property::from_string_view("bar"), false);
+  indexer.insert(Property::from_string_view("baz"), false);
+  indexer.insert(Property::from_string_view("qux"), false);
+
+  indexer.reserve(4);
+  EXPECT_GE(indexer.capacity(), size_before);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharRehashPreservesData) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(64);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  std::vector<std::string> values = {"foo",  "bar",   "baz",   "qux",
+                                     "quux", "corge", "grault"};
+  for (const auto& v : values) {
+    indexer.insert(Property::from_string_view(v), true);
+  }
+  ExpectStringValues(indexer, values);
+
+  indexer.rehash(64);
+  EXPECT_GE(indexer.capacity(), 64U);
+  ExpectStringValues(indexer, values);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharReserveInsertDumpReload) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(64);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+
+  LFIndexer<uint32_t> writable;
+  OpenIndexerLegacy(writable, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+
+  constexpr size_t N = 5;
+  writable.reserve(N);
+
+  std::vector<std::string> values = {"one", "two", "three", "four", "five"};
+  for (const auto& v : values) {
+    writable.insert(Property::from_string_view(v), true);
+  }
+  ExpectStringValues(writable, values);
+
+  CheckpointManifest dump_desc = DumpIndexerLegacy(writable, *ckp);
+
+  LFIndexer<uint32_t> reader;
+  OpenIndexerLegacy(reader, *ckp, string_type, dump_desc,
+                    MemoryLevel::kInMemory);
+  ExpectStringValues(reader, values);
+  reader.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharShortDumpReopenReserveThenInsertLong_InMemory) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  constexpr uint16_t kWidth = 64;
+  auto type_info = std::make_shared<StringTypeInfo>(kWidth);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  CheckpointManifest dump_desc;
+
+  std::vector<std::string> short_values = {"a", "bb", "ccc"};
+  {
+    LFIndexer<uint32_t> writer;
+    OpenIndexerLegacy(writer, *ckp, string_type, CheckpointManifest(),
+                      MemoryLevel::kInMemory);
+    for (const auto& v : short_values) {
+      writer.insert(Property::from_string_view(v), true);
+    }
+    dump_desc = DumpIndexerLegacy(writer, *ckp);
+  }
+
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, dump_desc,
+                    MemoryLevel::kInMemory);
+  ExpectStringValues(indexer, short_values);
+
+  constexpr size_t kExtra = 4;
+  indexer.reserve(short_values.size() + kExtra);
+  EXPECT_GE(indexer.capacity(), short_values.size() + kExtra);
+
+  std::vector<std::string> long_values;
+  for (size_t i = 0; i < kExtra; ++i) {
+    long_values.push_back(std::string(60, static_cast<char>('d' + i)));
+  }
+  for (const auto& v : long_values) {
+    indexer.insert(Property::from_string_view(v), true);
+  }
+
+  std::vector<std::string> all = short_values;
+  all.insert(all.end(), long_values.begin(), long_values.end());
+  ExpectStringValues(indexer, all);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharShortDumpReopenInsertSafeLong_InMemory) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  constexpr uint16_t kWidth = 48;
+  auto type_info = std::make_shared<StringTypeInfo>(kWidth);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  CheckpointManifest dump_desc;
+
+  std::vector<std::string> short_values = {"x", "y", "z", "w"};
+  {
+    LFIndexer<uint32_t> writer;
+    OpenIndexerLegacy(writer, *ckp, string_type, CheckpointManifest(),
+                      MemoryLevel::kInMemory);
+    writer.reserve(short_values.size());
+    for (const auto& v : short_values) {
+      writer.insert(Property::from_string_view(v), false);
+    }
+    dump_desc = DumpIndexerLegacy(writer, *ckp);
+    writer.Close();
+  }
+
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, dump_desc,
+                    MemoryLevel::kInMemory);
+  EXPECT_EQ(indexer.size(), short_values.size());
+
+  std::vector<std::string> long_values;
+  for (size_t i = 0; i < 5; ++i) {
+    long_values.push_back(std::string(45, static_cast<char>('A' + i)));
+  }
+  for (const auto& v : long_values) {
+    indexer.insert(Property::from_string_view(v), true);
+  }
+
+  std::vector<std::string> all = short_values;
+  all.insert(all.end(), long_values.begin(), long_values.end());
+  ExpectStringValues(indexer, all);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharShortDumpReopenReserveThenInsertLong_SyncToFile) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  constexpr uint16_t kWidth = 32;
+  auto type_info = std::make_shared<StringTypeInfo>(kWidth);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  CheckpointManifest dump_desc;
+
+  std::vector<std::string> short_values = {"hi", "yo", "ok"};
+  {
+    LFIndexer<uint32_t> writer;
+    OpenIndexerLegacy(writer, *ckp, string_type, CheckpointManifest(),
+                      MemoryLevel::kInMemory);
+    for (const auto& v : short_values) {
+      writer.insert(Property::from_string_view(v), true);
+    }
+    dump_desc = DumpIndexerLegacy(writer, *ckp);
+    writer.Close();
+  }
+
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, dump_desc,
+                    MemoryLevel::kSyncToFile);
+  ExpectStringValues(indexer, short_values);
+
+  constexpr size_t kExtra = 3;
+  indexer.reserve(short_values.size() + kExtra);
+  EXPECT_GE(indexer.capacity(), short_values.size() + kExtra);
+
+  std::vector<std::string> long_values;
+  for (size_t i = 0; i < kExtra; ++i) {
+    long_values.push_back(std::string(30, static_cast<char>('p' + i)));
+  }
+  for (const auto& v : long_values) {
+    indexer.insert(Property::from_string_view(v), true);
+  }
+
+  std::vector<std::string> all = short_values;
+  all.insert(all.end(), long_values.begin(), long_values.end());
+  ExpectStringValues(indexer, all);
+  indexer.Close();
+}
+
+TEST_F(LFIndexerTest, VarcharStringOverflow) {
+  CheckpointManager ws;
+  ws.Open(test_dir_);
+  auto ckp = make_checkpoint(ws);
+
+  auto type_info = std::make_shared<StringTypeInfo>(32);
+  DataType string_type(DataTypeId::kVarchar, type_info);
+  LFIndexer<uint32_t> indexer;
+  OpenIndexerLegacy(indexer, *ckp, string_type, CheckpointManifest(),
+                    MemoryLevel::kInMemory);
+  indexer.reserve(4);
+
+  std::vector<std::string> valid_strings = {
+      "short",                 // 5 chars
+      "medium_length_string",  // 21 chars
+      std::string(32, 'a'),    // exactly 32 chars (max length)
+      "boundary"               // 8 chars, to test boundary condition
+  };
+
+  for (const auto& v : valid_strings) {
+    indexer.insert(Property::from_string_view(v), false);
+  }
+  ExpectStringValues(indexer, valid_strings);
+  indexer.reserve(8);
+
+  std::string overflow_string = std::string(31, 'a');
+  for (size_t i = 0; i < 2; ++i) {
+    std::string test_string = overflow_string + std::to_string(i);
+    indexer.insert(Property::from_string_view(test_string), false);
+    valid_strings.push_back(test_string);
+  }
+  ExpectStringValues(indexer, valid_strings);
+
+  EXPECT_THROW(
+      indexer.insert(Property::from_string_view(overflow_string), false),
+      neug::exception::StorageException);
+
+  indexer.Close();
+}
+
 }  // namespace neug
